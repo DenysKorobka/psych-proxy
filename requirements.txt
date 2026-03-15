@@ -1,1 +1,5 @@
-pyTelegramBotAPI==4.14.0
+fastapi
+uvicorn[standard]
+anthropic
+pydantic
+httpx
