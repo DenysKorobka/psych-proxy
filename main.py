@@ -1,132 +1,61 @@
-"""
-Claude API Proxy для Mini App
-==============================
-- /chat  -> відповіді Claude
-- /notify -> відправка повідомлень у Telegram
-"""
-
 import os
-import httpx
-import anthropic
+import threading
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from fastapi import FastAPI
+import uvicorn
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List
+# 1. Налаштування Telegram Бота
+TOKEN = "8643334892:AAGtmsf-JlULGVSx2GqNKeks5Orjv47yFjM"
 
+# ⚠️ ВАЖЛИВО: Вставте сюди своє посилання на міні-додаток (наприклад, з Netlify)
+WEB_APP_URL = "https://denyskorobka.github.io/psych-miniapp/" 
 
+bot = telebot.TeleBot(TOKEN)
+
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("Відкрити додаток", web_app=WebAppInfo(url=WEB_APP_URL)))
+    
+    first_name = message.from_user.first_name or "клієнте"
+    
+    text = (f"Привіт, <b>{first_name}</b>! 👋\n\n"
+            f"Я бот-асистент Олени Коваленко.\n\n"
+            f"Увесь мій функціонал (запис на сесії, тести, корисні матеріали та AI-помічник) "
+            f"тепер знаходиться у зручному міні-додатку.\n\n"
+            f"Тисни кнопку нижче, щоб розпочати! 👇")
+    
+    bot.send_message(message.chat.id, text, parse_mode="HTML", reply_markup=markup)
+
+@bot.message_handler(func=lambda message: True)
+def handle_all_other_messages(message):
+    # Якщо людина пише щось інше, направляємо її в додаток
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("Відкрити додаток", web_app=WebAppInfo(url=WEB_APP_URL)))
+    bot.send_message(
+        message.chat.id, 
+        "Щоб скористатися всіма функціями, просто відкрий наш міні-додаток 👇", 
+        reply_markup=markup
+    )
+
+def run_bot():
+    print("Запуск Telegram бота...")
+    bot.infinity_polling()
+
+# 2. Налаштування FastAPI (щоб Railway не видавав помилку сервера)
 app = FastAPI()
 
+@app.get("/")
+def read_root():
+    return {"status": "Bot is running!"}
 
-# ---------------- CORS ----------------
+@app.on_event("startup")
+def on_startup():
+    # Запускаємо бота паралельно з веб-сервером
+    thread = threading.Thread(target=run_bot, daemon=True)
+    thread.start()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["*"],
-)
-
-
-# ---------------- ENV ----------------
-
-CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-
-client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
-
-
-# ---------------- SYSTEM PROMPT ----------------
-
-SYSTEM_PROMPT = """Ти — теплий, уважний AI-помічник психолога Олени Коваленко.
-Відповідаєш ТІЛЬКИ українською мовою.
-
-Твоя роль:
-- Надавати емоційну підтримку
-- Допомагати зрозуміти емоційний стан
-- Ставити м'які уточнюючі запитання
-- Не ставити діагнозів
-
-Стиль:
-- Тепло
-- Без осуду
-- 3–5 речень максимум
-- Іноді завершуй питанням
-
-Якщо людині дуже важко — м'яко запропонуй запис на консультацію.
-"""
-
-
-# ---------------- MODELS ----------------
-
-class Message(BaseModel):
-    role: str
-    content: str
-
-
-class ChatRequest(BaseModel):
-    messages: List[Message]
-
-
-class NotifyRequest(BaseModel):
-    chat_id: str
-    text: str
-
-
-# ---------------- CHAT ENDPOINT ----------------
-
-@app.post("/chat")
-async def chat(req: ChatRequest):
-
-    if not CLAUDE_API_KEY:
-        raise HTTPException(status_code=500, detail="CLAUDE_API_KEY missing")
-
-    messages = [{"role": m.role, "content": m.content} for m in req.messages[-10:]]
-
-    try:
-
-        response = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=300,
-            system=SYSTEM_PROMPT,
-            messages=messages,
-        )
-
-        return {"reply": response.content[0].text}
-
-    except anthropic.APIError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-
-
-# ---------------- TELEGRAM NOTIFY ----------------
-
-@app.post("/notify")
-async def notify(req: NotifyRequest):
-
-    if not TELEGRAM_BOT_TOKEN:
-        raise HTTPException(status_code=500, detail="TELEGRAM_BOT_TOKEN missing")
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-
-    payload = {
-        "chat_id": req.chat_id,
-        "text": req.text,
-        "parse_mode": "Markdown"
-    }
-
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post(url, json=payload)
-
-    data = response.json()
-
-    if not data.get("ok"):
-        raise HTTPException(status_code=502, detail=data)
-
-    return {"ok": True}
-
-
-# ---------------- HEALTH ----------------
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
