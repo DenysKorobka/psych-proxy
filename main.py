@@ -18,7 +18,7 @@ def send_welcome(message):
     markup = InlineKeyboardMarkup()
     markup.add(
         InlineKeyboardButton(
-            "Протестувати бота",
+            "Протестувати додаток",
             web_app=WebAppInfo(url=WEB_APP_URL)
         )
     )
